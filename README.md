@@ -17,7 +17,7 @@ Offline point-of-sale for small stores: sell, items and stock, utang, cash drawe
 6. For Google Play, upload the `.aab` from the same zip instead.
 
 ## 3. Updating later
-The APK just opens your hosted site, so you do not rebuild it. Edit the files, raise the version in `CACHE = 'tindahan-v6'` in `sw.js` by one (v6 to v7), push, and phones update the next time they open the app online.
+The APK just opens your hosted site, so you do not rebuild it. Edit the files, raise the version in `CACHE = 'tindahan-v7'` in `sw.js` by one (v7 to v8), push, and phones update the next time they open the app online.
 
 ## Good to know
 - Data is stored on each phone only. Use **Settings > Save backup** regularly. Clearing app or Chrome data erases it.
@@ -27,4 +27,6 @@ The APK just opens your hosted site, so you do not rebuild it. Edit the files, r
 - Cash drawer: with a Bluetooth or RawBT printer that has a drawer port, tick Settings > Receipt printing > Open cash drawer on cash sales.
 - Editable receipt: store name, address/tagline, phone, footer message and a logo image, all in Settings.
 - Admin PIN: set one in Settings > Admin PIN. Once set, voiding a sale or erasing all data asks for the PIN, so a cashier can't do either without the owner.
+- Inventory value (capital): Reports shows how much money is tied up in current stock, at cost. Print it, export it to CSV, or share it as text.
+- Delete a month of sales: Reports > "Delete a month of sales". Removes sale records for the chosen month only; it does not touch stock on hand or utang already recorded, and it asks for the admin PIN if one is set.
 - Load and bill payments are recorded with the **+** button as a custom amount. They are not sent to any provider.

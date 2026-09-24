@@ -504,6 +504,47 @@ function openPinSetup(mode) {
   };
 }
 
+
+/* Delete every sale record in a chosen calendar month. PIN-gated like void and erase.
+   Only removes the sale records; stock and utang already recorded are left as-is,
+   since a historical cleanup should not silently rewrite today's inventory or debts. */
+function openDeleteMonth() {
+  const now = new Date(), ymNow = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const w = openSheet({ title: 'Delete a month of sales' });
+  setBody(w, `
+    <label class="lbl" for="dm_month">Month to delete</label>
+    <input id="dm_month" class="in" type="month" value="${ymNow}" max="${ymNow}" data-in="dmMonth">
+    <div id="dm_prev"></div>
+    <p class="note">This deletes sale records only. Stock levels and utang balances already recorded will not change. This cannot be undone.</p>`);
+  setFooter(w, `<button class="btn ghost grow" data-act="close">Cancel</button><button class="btn danger grow" id="dm_go" data-act="go" disabled>Delete this month</button>`);
+  const draw = () => {
+    const v = $('#dm_month', w).value || ymNow, [y, m] = v.split('-').map(Number);
+    const from = new Date(y, m - 1, 1).getTime(), to = new Date(y, m, 1).getTime();
+    const found = D.sales.filter(s => s.ts >= from && s.ts < to);
+    const amt = found.filter(s => !s.voided).reduce((a, s) => a + s.total, 0);
+    $('#dm_prev', w).innerHTML = found.length
+      ? `<p class="note"><b>${found.length} sale${found.length === 1 ? '' : 's'}</b> found, worth ${money(amt)}.</p>`
+      : `<p class="note">No sales found for this month.</p>`;
+    $('#dm_go', w).disabled = !found.length;
+    w._found = found; w._label = new Date(y, m - 1, 1).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+  };
+  w._in.dmMonth = draw;
+  w._acts.go = () => {
+    const found = w._found || []; if (!found.length) return;
+    const n = found.length, amt = found.filter(s => !s.voided).reduce((a, s) => a + s.total, 0), label = w._label;
+    requirePin('Admin PIN required to delete sales', () => confirmBox({
+      title: 'Delete ' + n + ' sale' + (n === 1 ? '' : 's') + '?',
+      msg: 'This removes ' + n + ' sale record' + (n === 1 ? '' : 's') + ' from ' + label + ', worth ' + money(amt) + '. Stock and utang already recorded are not changed. This cannot be undone.',
+      ok: 'Delete sales', danger: true
+    }, () => {
+      const ids = new Set(found.map(s => s.id));
+      D.sales = D.sales.filter(s => !ids.has(s.id));
+      save('sales'); closeSheet(); toast(n + ' sale' + (n === 1 ? '' : 's') + ' deleted'); render();
+    }));
+  };
+  draw();
+}
+
 /* custom amount (e-load, bills, anything not in Items) */
 function customItem() {
   const w = openSheet({ title: 'Custom amount' });
@@ -545,8 +586,8 @@ function wrapText(t, W) {
   if (cur) out.push(cur);
   return out;
 }
-/* Turns a sale into fixed-width lines: [{t: 'text', b: bold?}] */
-function rcptLines(s, W = 32) {
+/* Fixed-width line helpers shared by receipts and the inventory report. */
+function lineBuilder(W) {
   const L = [], add = (t, b = false) => L.push({ t, b });
   const ctr = (t, b) => wrapText(ascii(t), W).forEach(x => add(' '.repeat(Math.floor((W - x.length) / 2)) + x, b));
   const two = (left, right, b) => {
@@ -558,6 +599,11 @@ function rcptLines(s, W = 32) {
     else { add(last, b); add(' '.repeat(Math.max(0, W - right.length)) + right, b); }
   };
   const rule = () => add('-'.repeat(W));
+  return { L, add, ctr, two, rule };
+}
+/* Turns a sale into fixed-width lines: [{t: 'text', b: bold?}] */
+function rcptLines(s, W = 32) {
+  const { L, ctr, two, rule } = lineBuilder(W);
   ctr(D.settings.storeName || 'Store', true);
   if (D.settings.address) ctr(D.settings.address);
   if (D.settings.phone) ctr(D.settings.phone);
@@ -656,6 +702,10 @@ const drawerReady = () => !!D.settings.drawer && (D.settings.printMode || 'syste
 function openDrawer() {
   if ((D.settings.printMode || 'system') === 'system') return toast('Cash drawers need the Bluetooth printer or RawBT option in Settings.');
   return sendToPrinter(Uint8Array.from([0x1B, 0x40, ...drawerKick()]), 'Opening drawer…');
+}
+async function printLines(lines) {
+  if ((D.settings.printMode || 'system') === 'system') { systemPrint(lines); return; }
+  await sendToPrinter(escpos(lines), 'Printing…');
 }
 const sampleSale = () => ({ no: 1, ts: Date.now(), items: [{ qty: 2, name: 'Sample item', price: 10 }, { qty: 1, name: 'Another item with a long name', price: 25 }], subtotal: 45, discount: 0, total: 45, method: 'cash', tendered: 50, change: 5 });
 
@@ -886,6 +936,7 @@ function renderCash() {
     const today = E.filter(e => e.ts >= t0), inn = today.filter(e => e.amt > 0).reduce((a, e) => a + e.amt, 0), out = today.filter(e => e.amt < 0).reduce((a, e) => a - e.amt, 0);
     host.innerHTML = `<div class="headline"><small>Cash in drawer now</small><b>${money(bal)}</b><div class="sub"><span>Today in ${money(inn)}</span><span>Today out ${money(out)}</span></div></div>
       <div class="btnrow"><button class="btn primary" data-act="cashIn">Cash in</button><button class="btn ghost" data-act="cashOut">Cash out</button>${drawerReady() ? '<button class="btn ghost" data-act="openDrawer">Open drawer</button>' : ''}</div>
+      <div class="btnrow"><button class="btn ghost" data-act="delMonth">Delete a month of sales</button></div>
       <p class="note">The balance counts cash sales, cash utang payments, cash in/out and expenses paid from the drawer. Card and e-wallet sales are not included.</p>
       ${E.length ? `<div class="list">${E.slice(0, 80).map(e => `<button class="row" data-act="${e.act}" data-id="${e.id}"><div class="l"><b>${esc(e.label)}</b><small>${e.label.startsWith(e.kind) ? '' : e.kind + ', '}${fmtDT(e.ts)}</small></div><div class="r"><b class="${e.amt < 0 ? 'neg' : 'pos'}">${e.amt < 0 ? '-' : '+'}${money(Math.abs(e.amt))}</b></div></button>`).join('')}</div>` : '<div class="empty"><p>Cash sales and drawer entries will show up here.</p></div>'}`;
   } else {
@@ -919,6 +970,55 @@ function expenseEntry(id) {
 /* =====================================================================
    REPORTS
    ===================================================================== */
+
+/* =====================================================================
+   INVENTORY VALUE ("capital"): how much money is tied up in stock right now.
+   This is a snapshot as of today, not tied to the Reports period picker.
+   ===================================================================== */
+function inventoryValue() {
+  const rows = D.products.filter(p => p.track).map(p => ({
+    name: p.name, category: p.category || 'Uncategorized', stock: p.stock, cost: p.cost || 0, price: p.price,
+    value: round2(p.stock * (p.cost || 0))
+  })).sort((a, b) => b.value - a.value);
+  const byCat = {};
+  rows.forEach(r => { byCat[r.category] = round2((byCat[r.category] || 0) + r.value); });
+  return { rows, total: round2(rows.reduce((a, r) => a + r.value, 0)), byCat, trackedCount: rows.filter(r => r.stock > 0).length };
+}
+function capitalReportLines(inv, W) {
+  const { L, ctr, two, rule } = lineBuilder(W);
+  ctr(D.settings.storeName || 'Store', true);
+  if (D.settings.address) ctr(D.settings.address);
+  ctr('Inventory / Capital Report');
+  ctr(fmtDT(Date.now()));
+  rule();
+  inv.rows.filter(r => r.stock > 0).forEach(r => two(`${r.stock} x ${r.name}`, money(r.value)));
+  rule();
+  Object.entries(inv.byCat).sort((a, b) => b[1] - a[1]).forEach(([c, v]) => two(c, money(v)));
+  rule();
+  two('TOTAL CAPITAL', money(inv.total), true);
+  return L;
+}
+function openInventoryReport() {
+  const inv = inventoryValue(), lines = capitalReportLines(inv, D.settings.paper === 80 ? 48 : 32);
+  const w = openSheet({ title: 'Inventory report' });
+  setBody(w, `<div class="resibo"><pre style="margin:0;font:inherit;white-space:pre-wrap">${esc(lines.map(l => l.t).join('\n'))}</pre></div>
+    <p class="note">This is what you have spent on stock currently on hand, valued at your cost price. It does not include items you have not marked "Track stock", and it changes as you sell and restock.</p>`);
+  setFooter(w, `<button class="btn ghost grow" data-act="shareInv">Share</button><button class="btn ghost grow" data-act="printInv">Print</button><button class="btn primary grow" data-act="close">Done</button>`);
+  w._acts.printInv = () => printLines(lines);
+  w._acts.shareInv = async () => {
+    const text = lines.map(l => l.t).join('\n');
+    try { if (navigator.share) return await navigator.share({ title: 'Inventory report', text }); } catch (e) { if (e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(text); toast('Report copied'); } catch { toast('Sharing is not available here'); }
+  };
+}
+function exportInventoryCsv() {
+  const inv = inventoryValue(), q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const rows = [['Category', 'Item', 'Stock', 'Cost each', 'Value at cost', 'Selling price']];
+  inv.rows.forEach(r => rows.push([r.category, r.name, r.stock, r.cost, r.value, r.price]));
+  rows.push(['', '', '', '', inv.total, '']);
+  download('tindahan-inventory-value-' + new Date().toISOString().slice(0, 10) + '.csv', '\ufeff' + rows.map(r => r.map(q).join(',')).join('\n'), 'text/csv');
+}
+
 const PERIODS = [['today', 'Today'], ['yest', 'Yesterday'], ['week', '7 days'], ['month', 'This month'], ['all', 'All time']];
 function rangeOf(p) {
   const t0 = day0(), d = new Date();
@@ -945,6 +1045,7 @@ function renderReports() {
   const t0 = day0(), days = [];
   for (let i = 6; i >= 0; i--) { const a = t0 - i * DAY; days.push({ a, v: D.sales.filter(s => !s.voided && s.ts >= a && s.ts < a + DAY).reduce((x, s) => x + s.total, 0) }); }
   const mx = Math.max(1, ...days.map(d => d.v));
+  const inv = inventoryValue();
   const low = D.products.filter(isLow).sort((a, b) => a.stock - b.stock).slice(0, 8);
   const recent = D.sales.filter(s => inR(s.ts)).sort((a, b) => b.ts - a.ts).slice(0, 40);
 
@@ -959,6 +1060,10 @@ function renderReports() {
       <div class="tot"><dt>Net profit</dt><i></i><dd class="${net < 0 ? 'neg' : ''}">${money(net)}</dd></div>
     </dl>
     ${onUtang || collected ? `<p class="note">${money(onUtang)} of these sales are on utang. Utang collected in this period: ${money(collected)}.</p>` : ''}
+    <h3 class="sec">Capital in stock (today)</h3>
+    <div class="headline"><small>Money tied up in stock right now</small><b>${money(inv.total)}</b><div class="sub"><span>${inv.trackedCount} item${inv.trackedCount === 1 ? '' : 's'} on hand</span></div></div>
+    <div class="btnrow"><button class="btn ghost" data-act="printInvBtn">Print report</button><button class="btn ghost" data-act="exportInvCsv">Export CSV</button></div>
+    <p class="note">Valued at your cost price for items with "Track stock" on. This is a snapshot for today, separate from the period above.</p>
     <h3 class="sec">Last 7 days</h3>
     <div class="chart" role="img" aria-label="Sales for the last 7 days">${days.map((d, i) => `<div class="c${i === 6 ? ' today' : ''}"><em>${d.v ? (d.v >= 1000 ? Math.round(d.v / 100) / 10 + 'k' : Math.round(d.v)) : ''}</em><i style="height:${Math.max(3, d.v / mx * 78)}px"></i><span>${new Date(d.a).toLocaleDateString('en-PH', { weekday: 'short' }).slice(0, 3)}</span></div>`).join('')}</div>
     ${Object.keys(byM).length ? `<h3 class="sec">By payment type</h3><div class="list">${Object.entries(byM).map(([k, v]) => `<div class="row"><div class="l"><b>${METHODS[k]}</b></div><div class="r"><b>${money(v)}</b></div></div>`).join('')}</div>` : ''}
@@ -966,7 +1071,10 @@ function renderReports() {
     ${low.length ? `<h3 class="sec">Running low</h3><div class="list">${low.map(p => `<button class="row" data-act="editProduct" data-id="${p.id}"><div class="l"><b>${esc(p.name)}</b></div><div class="r"><b class="neg">${p.stock <= 0 ? 'Out' : p.stock + ' left'}</b></div></button>`).join('')}</div>` : ''}
     <h3 class="sec">Transactions</h3>
     ${recent.length ? `<div class="list">${recent.map(s => `<button class="row" data-act="openSale" data-id="${s.id}"><div class="l"><b class="${s.voided ? 'strike' : ''}">${pad(s.no)} ${METHODS[s.method]}</b><small>${fmtDT(s.ts)}${s.voided ? ', voided' : ''}</small></div><div class="r"><b class="${s.voided ? 'strike' : ''}">${money(s.total)}</b></div></button>`).join('')}</div>` : '<div class="empty"><p>No sales in this period.</p></div>'}
-    ${D.sales.length ? `<div class="btnrow" style="margin-top:14px"><button class="btn ghost" data-act="exportCsv">Export sales (CSV)</button></div>` : ''}`;
+    ${D.sales.length ? `<div class="btnrow" style="margin-top:14px"><button class="btn ghost" data-act="exportCsv">Export sales (CSV)</button></div>` : ''}
+    <h3 class="sec">Manage data</h3>
+    <p class="note">Delete old sale records to keep the app tidy. This removes sale receipts only — it does not change stock on hand or utang balances already recorded, and it cannot be undone.</p>
+    <button class="btn danger block" data-act="delMonth">Delete a month of sales</button>`;
 }
 
 /* =====================================================================
@@ -1190,7 +1298,10 @@ const A = {
   editExpense: el => expenseEntry(el.dataset.id),
   openSale: el => openSale(el.dataset.id),
   period: el => { S.period = el.dataset.v; renderReports(); },
-  exportCsv
+  exportCsv,
+  delMonth: openDeleteMonth,
+  printInvBtn: openInventoryReport,
+  exportInvCsv: exportInventoryCsv
 };
 const IN = {
   sellq: el => { S.q = el.value; drawSellList(); },
