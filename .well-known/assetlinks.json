@@ -1,8 +1,9 @@
 [{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "com.yourname.tindahan",
-    "sha256_cert_fingerprints": ["A1:B2:C3:D4:...(long string)..."]
-  }
-}]
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "io.github.cavitecommuter.twa",
+        "sha256_cert_fingerprints": ["D4:2D:12:E7:C6:C2:27:98:27:40:70:B3:A8:38:83:23:8F:4B:C3:6A:65:82:02:D8:B1:47:FC:A7:FB:D3:74:58"]
+      }
+    }]
+
